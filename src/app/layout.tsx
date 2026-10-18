@@ -2,9 +2,29 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Focus — A Living 2.5D Productivity Sanctuary',
+  title: 'Focus Sanctuary — Generative 3D Spatial Productivity Realm',
   description:
-    'Focus transforms everyday goals into a persistent, procedurally generated 2.5D nature world—and helps you find your next step when plans change.'
+    'Focus Sanctuary transforms daily goals into a living, procedurally expanding 3D medieval settlement powered by AMD ROCm open models, real-time WebGL world building, and interactive animated companions.',
+  openGraph: {
+    title: 'Focus Sanctuary — Generative 3D Spatial Productivity Realm',
+    description:
+      'Transform chaotic daily intentions into a living medieval settlement powered by AMD AI.',
+    images: [
+      {
+        url: '/cover-image.jpg',
+        width: 1920,
+        height: 1080,
+        alt: 'Focus Sanctuary 3D Medieval Settlement'
+      }
+    ]
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Focus Sanctuary — Generative 3D Spatial Productivity Realm',
+    description:
+      'Transform chaotic daily intentions into a living medieval settlement powered by AMD AI.',
+    images: ['/cover-image.jpg']
+  }
 };
 
 export default function RootLayout({
