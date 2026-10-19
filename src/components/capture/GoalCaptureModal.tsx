@@ -106,71 +106,73 @@ export function GoalCaptureModal() {
       aria-labelledby="cabin-parchment-title"
       className="pointer-events-none fixed inset-0 z-40 flex flex-col justify-between p-4 md:p-6"
     >
-      {/* Top Bar Inside Real-Time 3D Log Cabin (3D Villagers & Hearth 100% Visible!) */}
-      <div className="pointer-events-auto flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div
-            className="border-2 border-[#6E4726] bg-[#1E120A]/95 px-3.5 py-2 text-xs font-bold text-[#FBF3E4] shadow-xl backdrop-blur-sm"
-            style={{ borderRadius: '6px' }}
-          >
-            Inside {townName} Hearth Cabin · Real-Time 3D Villagers Active
+      {/* Top Section: Top Bar & Live Subtitle Banner (Anchored high at the stone hearth chimney so all 4 villagers stay 100% visible!) */}
+      <div className="flex w-full flex-col items-center gap-2.5">
+        <div className="pointer-events-auto flex w-full flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div
+              className="border-2 border-[#6E4726] bg-[#1E120A]/95 px-3.5 py-2 text-xs font-bold text-[#FBF3E4] shadow-xl backdrop-blur-sm"
+              style={{ borderRadius: '6px' }}
+            >
+              Inside {townName} Hearth Cabin · Real-Time 3D Villagers Active
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                voiceoverEngine.unlockOnUserGesture();
+                void voiceoverEngine.speak({
+                  speakerId: 'ELENA_VILLAGER',
+                  speakerName: 'Elena',
+                  speakerRole: 'Village Steward',
+                  text: `Welcome by the fire, ${founderName}! Maya, Clara, Alden, and I are ready to plan your day. Write what you will do today on the parchment!`
+                });
+              }}
+              className="inline-flex items-center gap-1.5 border-2 border-[#8C5A32] bg-[#2B180C]/95 px-3.5 py-2 text-xs font-bold text-amber-300 shadow-xl backdrop-blur-sm hover:bg-[#3B2212] transition cursor-pointer whitespace-nowrap"
+              style={{ borderRadius: '6px' }}
+            >
+              <Volume2 className="h-4 w-4 shrink-0" />
+              <span>Hear Villagers Speak</span>
+            </button>
           </div>
 
           <button
             type="button"
             onClick={() => {
               voiceoverEngine.unlockOnUserGesture();
-              void voiceoverEngine.speak({
-                speakerId: 'ELENA_VILLAGER',
-                speakerName: 'Elena',
-                speakerRole: 'Village Steward',
-                text: `Welcome by the fire, ${founderName}! Maya, Clara, Alden, and I are ready to plan your day. Write what you will do today on the parchment!`
-              });
+              closeGoalModal();
             }}
-            className="inline-flex items-center gap-1.5 border-2 border-[#8C5A32] bg-[#2B180C]/95 px-3.5 py-2 text-xs font-bold text-amber-300 shadow-xl backdrop-blur-sm hover:bg-[#3B2212] transition cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-2 border-2 border-[#8C5A32] bg-[#1E120A]/95 px-4 py-2 text-xs md:text-sm font-bold text-[#FBF3E4] shadow-xl backdrop-blur-sm hover:bg-[#2E1C10] transition cursor-pointer whitespace-nowrap"
             style={{ borderRadius: '6px' }}
           >
-            <Volume2 className="h-4 w-4 shrink-0" />
-            <span>Hear Villagers Speak</span>
+            <span>Step Outside to 3D Village</span>
+            <ArrowRight className="h-4 w-4 shrink-0" />
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            voiceoverEngine.unlockOnUserGesture();
-            closeGoalModal();
-          }}
-          className="inline-flex items-center gap-2 border-2 border-[#8C5A32] bg-[#1E120A]/95 px-4 py-2 text-xs md:text-sm font-bold text-[#FBF3E4] shadow-xl backdrop-blur-sm hover:bg-[#2E1C10] transition cursor-pointer whitespace-nowrap"
-          style={{ borderRadius: '6px' }}
-        >
-          <span>Step Outside to 3D Village</span>
-          <ArrowRight className="h-4 w-4 shrink-0" />
-        </button>
-      </div>
-
-      {/* Live Villager Speech Subtitle Banner */}
-      {activeVoiceLine && (
-        <div
-          className="pointer-events-auto mx-auto flex max-w-xl items-center justify-between gap-3 border-2 border-[#8C5A32] bg-[#1A0F08]/95 px-4 py-2.5 text-[#FBF6EB] shadow-2xl backdrop-blur-md"
-          style={{ borderRadius: '6px' }}
-        >
-          <div className="text-xs md:text-sm">
-            <span className="font-bold text-amber-400">
-              {activeVoiceLine.speakerName} ({activeVoiceLine.speakerRole}):{' '}
-            </span>
-            <span>“{activeVoiceLine.text}”</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => void voiceoverEngine.replayLastLine()}
-            className="shrink-0 border border-amber-400/50 bg-[#2E1A0E] px-2.5 py-1 text-xs font-bold text-amber-300 hover:bg-[#3E2414] cursor-pointer whitespace-nowrap"
-            style={{ borderRadius: '4px' }}
+        {/* Live Villager Speech Subtitle Banner */}
+        {activeVoiceLine && (
+          <div
+            className="pointer-events-auto flex max-w-xl items-center justify-between gap-3 border-2 border-[#8C5A32] bg-[#1A0F08]/95 px-4 py-2 text-[#FBF6EB] shadow-2xl backdrop-blur-md"
+            style={{ borderRadius: '6px' }}
           >
-            Replay
-          </button>
-        </div>
-      )}
+            <div className="text-xs md:text-sm">
+              <span className="font-bold text-amber-400">
+                {activeVoiceLine.speakerName} ({activeVoiceLine.speakerRole}):{' '}
+              </span>
+              <span>“{activeVoiceLine.text}”</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void voiceoverEngine.replayLastLine()}
+              className="shrink-0 border border-amber-400/50 bg-[#2E1A0E] px-2.5 py-1 text-xs font-bold text-amber-300 hover:bg-[#3E2414] cursor-pointer whitespace-nowrap"
+              style={{ borderRadius: '4px' }}
+            >
+              Replay
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* =====================================================================
           DIEGETIC INTERACTIVE CARVED PARCHMENT FRAME HELD BY THE 3D VILLAGERS

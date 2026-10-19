@@ -497,6 +497,45 @@ export function FocusWorldCanvas() {
       return existingPromise.then(async (cached) => {
         if (!cached) return null;
         const cloned = SkeletonUtils.clone(cached.scene) as THREE.Group;
+        const leftUpLeg = cloned.getObjectByName('LeftUpLeg');
+        const isHumanRig = Boolean(leftUpLeg || cloned.getObjectByName('LeftArm'));
+        const isIdentityBindRig = Boolean(
+          leftUpLeg && Math.abs(leftUpLeg.quaternion.w) > 0.9
+        );
+        cloned.userData.isIdentityBindRig = isIdentityBindRig;
+
+        cloned.traverse((obj) => {
+          if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+            obj.frustumCulled = false;
+          }
+        });
+
+        if (isHumanRig) {
+          // Immediately place arms/hands into a natural relaxed standing pose so character never flashes T-pose/A-pose
+          const lArm = cloned.getObjectByName('LeftArm');
+          const rArm = cloned.getObjectByName('RightArm');
+          const lFore = cloned.getObjectByName('LeftForeArm');
+          const rFore = cloned.getObjectByName('RightForeArm');
+          const lHand = cloned.getObjectByName('LeftHand');
+          const rHand = cloned.getObjectByName('RightHand');
+          if (isIdentityBindRig) {
+            lArm?.quaternion.set(0.088, 0.172, -0.582, 0.79);
+            rArm?.quaternion.set(0.088, -0.172, 0.582, 0.79);
+            lFore?.quaternion.set(0.065, 0.015, 0.025, 0.997);
+            rFore?.quaternion.set(0.065, -0.015, -0.025, 0.997);
+            lHand?.quaternion.set(-0.04, -0.08, -0.05, 0.995);
+            rHand?.quaternion.set(-0.04, 0.08, 0.05, 0.995);
+          } else {
+            lArm?.quaternion.set(0.555, 0.218, 0.181, 0.782);
+            rArm?.quaternion.set(0.543, -0.291, -0.172, 0.769);
+            lFore?.quaternion.set(0.003, -0.015, 0.074, 0.997);
+            rFore?.quaternion.set(0.004, 0.018, -0.087, 0.996);
+            lHand?.quaternion.set(-0.14, -0.214, 0.125, 0.959);
+            rHand?.quaternion.set(-0.24, 0.312, -0.087, 0.915);
+          }
+          cloned.updateMatrixWorld(true);
+        }
+
         enhanceLoadedModel(cloned, {
           isCharacter: true,
           keepAxe: opts?.keepAxe,
@@ -536,6 +575,9 @@ export function FocusWorldCanvas() {
         if (!anims || anims.length === 0) {
           anims = await sharedKayKitAnimationsPromise;
         }
+        anims = (anims || []).filter(
+          (a) => a.name !== 'T-Pose' && a.name !== 'TPose'
+        );
         return { clone: cloned, animations: anims };
       });
     }
@@ -1016,7 +1058,10 @@ export function FocusWorldCanvas() {
         const idleAction = idleClip ? mixer.clipAction(idleClip) : null;
         const chopAction = chopClip ? mixer.clipAction(chopClip) : null;
         const walkAction = walkClip ? mixer.clipAction(walkClip) : null;
-        if (idleAction) idleAction.play();
+        if (idleAction) {
+          idleAction.play();
+          mixer.update(0);
+        }
 
         lumberjackSquad.push({
           group: clone,
@@ -1449,6 +1494,7 @@ export function FocusWorldCanvas() {
       idleAction: THREE.AnimationAction | null;
       speakAction: THREE.AnimationAction | null;
       baseRotY: number;
+      talkWeight: number;
     }> = [];
 
     const cabinHumanSpecs = [
@@ -1502,25 +1548,119 @@ export function FocusWorldCanvas() {
       }
     ];
 
-    void new Promise<THREE.AnimationClip[]>((resolve) => {
+    void new Promise<{
+      clips: THREE.AnimationClip[];
+      sourceBindWorldQuats: Map<string, THREE.Quaternion>;
+    }>((resolve) => {
       gltfLoader.load(
         '/assets/models/characters/anim_pack.glb',
         (gltf) => {
+          const sourceBindWorldQuats = new Map<string, THREE.Quaternion>();
+          gltf.scene.updateMatrixWorld(true);
+          gltf.scene.traverse((node) => {
+            if (node.name) {
+              sourceBindWorldQuats.set(
+                node.name,
+                node.getWorldQuaternion(new THREE.Quaternion())
+              );
+            }
+          });
           const rawClips = gltf.animations || [];
           const sanitizedClips = rawClips.map((clip) => {
             const c = clip.clone();
             // Retain only bone rotation (.quaternion) tracks.
-            // Stripping translation & scale tracks locks bone lengths to each character's anatomical skeleton,
-            // preventing joint disconnections, dislocated shoulders, and floating hips.
             c.tracks = c.tracks.filter((t) => t.name.endsWith('.quaternion'));
             return c;
           });
-          resolve(sanitizedClips);
+          resolve({ clips: sanitizedClips, sourceBindWorldQuats });
         },
         undefined,
-        () => resolve([])
+        () => resolve({ clips: [], sourceBindWorldQuats: new Map() })
       );
-    }).then((sharedHumanAnims) => {
+    }).then(({ clips: sharedHumanAnims, sourceBindWorldQuats }) => {
+      const identityQuat = new THREE.Quaternion();
+
+      const retargetClipForCharacter = (
+        clip: THREE.AnimationClip,
+        targetRoot: THREE.Group,
+        isIdentityRig: boolean
+      ): THREE.AnimationClip => {
+        const qSrc = new THREE.Quaternion();
+        const qDst = new THREE.Quaternion();
+        const qInvBone = new THREE.Quaternion();
+        const qPrev = new THREE.Quaternion();
+
+        const retargetedTracks = clip.tracks.flatMap((track) => {
+          if (!track.name.endsWith('.quaternion')) return [];
+          const rawTarget = track.name.slice(0, -'.quaternion'.length);
+          const boneName = rawTarget.split('/').pop() || rawTarget;
+          const bone = targetRoot.getObjectByName(boneName);
+          if (!bone) return [];
+          const clonedTrack = track.clone();
+          const parentName = bone?.parent?.name;
+          const qBindBone = sourceBindWorldQuats.get(boneName);
+          const qBindParent =
+            (parentName ? sourceBindWorldQuats.get(parentName) : undefined) ??
+            identityQuat;
+
+          const vals = clonedTrack.values;
+          const out = new Float32Array(vals.length);
+          if (qBindBone) {
+            qInvBone.copy(qBindBone).invert();
+          }
+
+          for (let i = 0; i < vals.length; i += 4) {
+            qSrc.set(vals[i], vals[i + 1], vals[i + 2], vals[i + 3]);
+            if (isIdentityRig && qBindBone) {
+              // Retarget from anim_pack ReadyPlayerMe bind space to identity-baked bind space (villager_elena.glb)
+              qDst.copy(qBindParent).multiply(qSrc).multiply(qInvBone).normalize();
+            } else {
+              qDst.copy(qSrc).normalize();
+            }
+
+            // Ensure continuous quaternion hemisphere (prevents 180/360° leg & shoulder flips during crossfade/interpolation)
+            if (i === 0) {
+              if (bone && qDst.dot(bone.quaternion) < 0) {
+                qDst.set(-qDst.x, -qDst.y, -qDst.z, -qDst.w);
+              }
+            } else if (qPrev.dot(qDst) < 0) {
+              qDst.set(-qDst.x, -qDst.y, -qDst.z, -qDst.w);
+            }
+            qPrev.copy(qDst);
+
+            out[i] = qDst.x;
+            out[i + 1] = qDst.y;
+            out[i + 2] = qDst.z;
+            out[i + 3] = qDst.w;
+          }
+          clonedTrack.values = out;
+          return [clonedTrack];
+        });
+
+        return new THREE.AnimationClip(clip.name, clip.duration, retargetedTracks);
+      };
+
+      const applyClipFrameZeroToPose = (
+        clip: THREE.AnimationClip,
+        targetRoot: THREE.Group
+      ) => {
+        for (const track of clip.tracks) {
+          if (!track.name.endsWith('.quaternion') || track.values.length < 4) continue;
+          const rawTarget = track.name.slice(0, -'.quaternion'.length);
+          const boneName = rawTarget.split('/').pop() || rawTarget;
+          const bone = targetRoot.getObjectByName(boneName);
+          if (bone) {
+            bone.quaternion.set(
+              track.values[0],
+              track.values[1],
+              track.values[2],
+              track.values[3]
+            );
+          }
+        }
+        targetRoot.updateMatrixWorld(true);
+      };
+
       for (const spec of cabinHumanSpecs) {
         void loadRiggedCharacter(spec.url, {
           tunicColorHex: spec.tunicColorHex,
@@ -1535,17 +1675,42 @@ export function FocusWorldCanvas() {
           clone.scale.setScalar(spec.scale);
           cabinGroup.add(clone);
 
-          const mixer = new THREE.AnimationMixer(clone);
-          const rawIdle =
+          const isIdentityRig = Boolean(clone.userData.isIdentityBindRig);
+          const baseIdle =
             sharedHumanAnims.find((a) => a.name === 'Idle') ?? sharedHumanAnims[0];
-          const rawSpeak =
-            sharedHumanAnims.find((a) => a.name === spec.talkClip) ?? rawIdle;
+          const baseSpeak =
+            sharedHumanAnims.find((a) => a.name === spec.talkClip) ?? baseIdle;
 
-          const idleAction = rawIdle ? mixer.clipAction(rawIdle) : null;
-          const speakAction = rawSpeak ? mixer.clipAction(rawSpeak) : null;
+          let idleClip: THREE.AnimationClip | null = null;
+          let speakClip: THREE.AnimationClip | null = null;
+
+          if (baseIdle) {
+            idleClip = retargetClipForCharacter(baseIdle, clone, isIdentityRig);
+            // Lock character rest pose to Idle Frame 0 BEFORE AnimationMixer binds PropertyMixers,
+            // so fallback/rest pose is always relaxed arms & grounded legs (never T-pose or A-pose).
+            applyClipFrameZeroToPose(idleClip, clone);
+          }
+          if (baseSpeak) {
+            speakClip = retargetClipForCharacter(baseSpeak, clone, isIdentityRig);
+          }
+
+          const mixer = new THREE.AnimationMixer(clone);
+          const idleAction = idleClip ? mixer.clipAction(idleClip) : null;
+          const speakAction = speakClip ? mixer.clipAction(speakClip) : null;
+
           if (idleAction) {
+            idleAction.enabled = true;
+            idleAction.setEffectiveTimeScale(1);
+            idleAction.setEffectiveWeight(1);
             idleAction.play();
           }
+          if (speakAction && speakAction !== idleAction) {
+            speakAction.enabled = true;
+            speakAction.setEffectiveTimeScale(1);
+            speakAction.setEffectiveWeight(0);
+            speakAction.play();
+          }
+          mixer.update(0);
 
           cabinCharacterMixers.push({
             id: spec.id,
@@ -1553,7 +1718,8 @@ export function FocusWorldCanvas() {
             root: clone,
             idleAction,
             speakAction,
-            baseRotY: spec.rotY
+            baseRotY: spec.rotY,
+            talkWeight: 0
           });
         });
       }
@@ -1874,6 +2040,7 @@ export function FocusWorldCanvas() {
               (animations[0] ? mixer.clipAction(animations[0]) : null);
             if (actionToPlay) {
               actionToPlay.reset().play();
+              mixer.update(0);
               ctrl.activeClipName = desiredClip;
             }
 
@@ -2034,7 +2201,10 @@ export function FocusWorldCanvas() {
           animations.find((a) => a.name.includes('Walk')) ??
           animations[0];
         if (walkClip) {
-          mixer.clipAction(walkClip).play();
+          const walkAct = mixer.clipAction(walkClip);
+          walkAct.time = pSpec.phase;
+          walkAct.play();
+          mixer.update(0);
         }
         patrolVillagers.push({
           group: clone,
@@ -2241,16 +2411,28 @@ export function FocusWorldCanvas() {
 
         for (let i = 0; i < cabinCharacterMixers.length; i++) {
           const cm = cabinCharacterMixers[i];
-          cm.mixer.update(dt);
-          if (cm.speakAction && cm.idleAction) {
-            if (isSpeaking && (cm.id === 'elena' || cm.id === 'maya' || cm.id === 'clara')) {
-              if (!cm.speakAction.isRunning()) {
-                cm.idleAction.crossFadeTo(cm.speakAction, 0.3, false).play();
-              }
-            } else if (!isSpeaking && cm.speakAction.isRunning()) {
-              cm.speakAction.crossFadeTo(cm.idleAction, 0.4, false).play();
-            }
+          const shouldSpeak =
+            isSpeaking &&
+            (cm.id === 'elena' ||
+              cm.id === 'maya' ||
+              cm.id === 'clara' ||
+              cm.id === 'alden');
+          if (cm.speakAction && cm.idleAction && cm.speakAction !== cm.idleAction) {
+            const targetTalk = shouldSpeak ? 1 : 0;
+            const blendSpeed = shouldSpeak ? 7.5 : 4.5;
+            cm.talkWeight +=
+              (targetTalk - cm.talkWeight) * Math.min(1, dt * blendSpeed);
+            if (cm.talkWeight < 0.001) cm.talkWeight = 0;
+            if (cm.talkWeight > 0.999) cm.talkWeight = 1;
+            cm.idleAction.enabled = true;
+            cm.idleAction.setEffectiveWeight(1 - cm.talkWeight);
+            cm.speakAction.enabled = true;
+            cm.speakAction.setEffectiveWeight(cm.talkWeight);
+          } else if (cm.idleAction) {
+            cm.idleAction.enabled = true;
+            cm.idleAction.setEffectiveWeight(1);
           }
+          cm.mixer.update(dt);
           if (isSpeaking) {
             cm.root.rotation.y =
               cm.baseRotY + Math.sin(elapsed * 5.5 + i) * 0.03 * audioEnergy;
